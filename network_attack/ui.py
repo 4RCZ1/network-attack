@@ -223,7 +223,7 @@ def main() -> None:
     remove_orphans = st.sidebar.checkbox(
         "Remove orphan nodes",
         value=False,
-        help="Connect isolated (degree-0) nodes to a random neighbour "
+        help="Connect isolated (degree-0) nodes to a random neighbor "
         "so no node is unreachable. Only affects Erdős–Rényi graphs.",
     )
 
