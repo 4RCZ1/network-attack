@@ -857,18 +857,17 @@ def main() -> None:
             plt.close(fig_curve)
 
             # Auto-advance when playing
-            if is_playing and epoch_idx < len(snapshots) - 1:
-                time.sleep(playback_speed)
-                st.session_state["replay_epoch_idx"] = epoch_idx + 1
-                st.rerun()
-            elif is_playing and epoch_idx >= len(snapshots) - 1:
-                if loop_animation:
-                    # Loop back to the beginning
+            if is_playing:
+                at_end = epoch_idx >= len(snapshots) - 1
+                if not at_end:
+                    time.sleep(playback_speed)
+                    st.session_state["replay_epoch_idx"] = epoch_idx + 1
+                    st.rerun()
+                elif loop_animation:
                     time.sleep(playback_speed)
                     st.session_state["replay_epoch_idx"] = 0
                     st.rerun()
                 else:
-                    # Reached the end — stop playing
                     st.session_state["replay_playing"] = False
 
 
