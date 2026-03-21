@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import sys
 import os
+import time
 
 # Ensure the project root is on sys.path so 'network_attack' can be imported
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -100,17 +101,74 @@ def _draw_network_fig(
 
 
 def _draw_curve_fig(
-    curves: Dict[str, List[float]], title: str = "Infection Growth"
+    curves: Dict[str, List[float]],
+    title: str = "Infection Growth",
+    highlight_epoch: Optional[int] = None,
+    full_curve: Optional[List[float]] = None,
 ) -> plt.Figure:
-    """Return a matplotlib Figure with infection curves."""
+    """Return a matplotlib Figure with infection curves.
+
+    Parameters
+    ----------
+    curves:
+        Mapping of label → list of infection ratios to plot.
+    title:
+        Figure title.
+    highlight_epoch:
+        If given, draw a marker dot at this epoch on the first curve.
+    full_curve:
+        If given, draw the full trajectory as a faint ghost line behind
+        the main curves so the viewer can anticipate the overall shape.
+    """
     fig, ax = plt.subplots(figsize=(8, 4))
+
+    # Ghost preview of the complete curve (shown during replay)
+    if full_curve is not None:
+        ax.plot(
+            range(len(full_curve)),
+            full_curve,
+            color="#e74c3c",
+            alpha=0.15,
+            linewidth=1.5,
+            linestyle="--",
+            label="_ghost",
+        )
+        ax.set_xlim(-0.5, len(full_curve) - 0.5)
+
+    use_single_color = len(curves) == 1
+
     for label, data in curves.items():
-        ax.plot(range(len(data)), data, label=label)
+        epochs = list(range(len(data)))
+        plot_kwargs: Dict[str, object] = {"label": label, "linewidth": 2}
+        if use_single_color:
+            plot_kwargs["color"] = "#e74c3c"
+        (line,) = ax.plot(epochs, data, **plot_kwargs)
+        # Filled area under the curve
+        ax.fill_between(
+            epochs,
+            data,
+            alpha=0.18,
+            color=line.get_color(),
+        )
+
+        # Animated marker at the current epoch
+        if highlight_epoch is not None and 0 <= highlight_epoch < len(data):
+            ax.plot(
+                highlight_epoch,
+                data[highlight_epoch],
+                "o",
+                color=line.get_color(),
+                markersize=8,
+                markeredgecolor="white",
+                markeredgewidth=1.5,
+                zorder=5,
+            )
+
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Infection Ratio")
     ax.set_ylim(-0.05, 1.05)
     ax.set_title(title)
-    ax.legend()
+    ax.legend(loc="lower right")
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     return fig
@@ -322,15 +380,19 @@ def main() -> None:
                 plt.close(fig)
 
     # ==================================================================
-    # TAB 3 – Step-by-step replay
+    # TAB 3 – Step-by-step replay with Play/Pause
     # ==================================================================
     with tab_replay:
         st.subheader("Step-by-Step Infection Replay")
         st.write(
-            "Replay the infection spreading epoch by epoch on the network graph."
+            "Replay the infection spreading epoch by epoch on the network graph. "
+            "Use the **Play** button to animate automatically or drag the slider manually."
         )
 
         if st.button("Prepare Replay", key="prepare_replay"):
+            # Stop any ongoing playback when re-preparing
+            st.session_state["replay_playing"] = False
+
             with st.spinner("Building network & running full simulation…"):
                 net = _build_network(
                     topology, n_nodes, seed,
@@ -375,6 +437,7 @@ def main() -> None:
                     "ba_m": ba_m if topology == "Barabási–Albert (Scale-Free)" else None,
                     "vuln_range": (vuln_lo, vuln_hi),
                 }
+                st.session_state["replay_epoch_idx"] = 0
 
             st.success(
                 f"Replay ready — {len(snapshots)} epochs captured."
@@ -386,9 +449,55 @@ def main() -> None:
             history = st.session_state["replay_history"]
             params = st.session_state["replay_net_params"]
 
-            epoch_idx = st.slider(
-                "Epoch", 0, len(snapshots) - 1, 0, key="replay_slider"
-            )
+            # ---- Playback controls ----
+            ctrl_cols = st.columns([1, 1, 1, 3])
+            with ctrl_cols[0]:
+                if st.button("▶ Play", key="replay_play"):
+                    st.session_state["replay_playing"] = True
+                    st.session_state["replay_epoch_idx"] = st.session_state.get(
+                        "replay_epoch_idx", 0
+                    )
+            with ctrl_cols[1]:
+                if st.button("⏸ Pause", key="replay_pause"):
+                    st.session_state["replay_playing"] = False
+            with ctrl_cols[2]:
+                if st.button("⏮ Reset", key="replay_reset"):
+                    st.session_state["replay_playing"] = False
+                    st.session_state["replay_epoch_idx"] = 0
+            with ctrl_cols[3]:
+                playback_speed = st.slider(
+                    "Speed (seconds per frame)",
+                    min_value=0.05,
+                    max_value=2.0,
+                    value=0.3,
+                    step=0.05,
+                    key="replay_speed",
+                )
+
+            is_playing = st.session_state.get("replay_playing", False)
+
+            # Determine epoch index: use session state when playing,
+            # otherwise let the slider drive.
+            if is_playing:
+                epoch_idx = st.session_state.get("replay_epoch_idx", 0)
+                # Show slider as read-only indicator (synced to current epoch)
+                st.slider(
+                    "Epoch",
+                    0,
+                    len(snapshots) - 1,
+                    epoch_idx,
+                    key="replay_slider_playing",
+                    disabled=True,
+                )
+            else:
+                epoch_idx = st.slider(
+                    "Epoch",
+                    0,
+                    len(snapshots) - 1,
+                    st.session_state.get("replay_epoch_idx", 0),
+                    key="replay_slider",
+                )
+                st.session_state["replay_epoch_idx"] = epoch_idx
 
             snapshot = snapshots[epoch_idx]
             rec = history[epoch_idx] if epoch_idx < len(history) else history[-1]
@@ -422,16 +531,26 @@ def main() -> None:
                         f"**Newly infected:** {', '.join(map(str, rec.newly_infected_ids))}"
                     )
 
-            # Show infection curve up to current epoch
-            partial_curve = [
-                h.infection_ratio for h in history[: epoch_idx + 1]
-            ]
+            # Show infection curve up to current epoch with improvements
+            full_ratios = [h.infection_ratio for h in history]
+            partial_curve = full_ratios[: epoch_idx + 1]
             fig_curve = _draw_curve_fig(
                 {"Infection": partial_curve},
-                title=f"Infection Growth (up to epoch {rec.epoch})",
+                title=f"Infection Growth (epoch {rec.epoch})",
+                highlight_epoch=epoch_idx,
+                full_curve=full_ratios,
             )
             st.pyplot(fig_curve)
             plt.close(fig_curve)
+
+            # Auto-advance when playing
+            if is_playing and epoch_idx < len(snapshots) - 1:
+                time.sleep(playback_speed)
+                st.session_state["replay_epoch_idx"] = epoch_idx + 1
+                st.rerun()
+            elif is_playing and epoch_idx >= len(snapshots) - 1:
+                # Reached the end — stop playing
+                st.session_state["replay_playing"] = False
 
 
 # ------------------------------------------------------------------
