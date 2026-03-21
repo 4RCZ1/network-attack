@@ -34,11 +34,24 @@ matplotlib.use("Agg")
 # ------------------------------------------------------------------
 
 COLOR_SAFE = "#3498db"
-COLOR_INFECTED = "#e74c3c"
+COLOR_INFECTED = "#000000"
 COLOR_NEWLY_INFECTED = "#f39c12"
 COLOR_EDGE_DEFAULT = "rgba(200,200,200,0.4)"
 COLOR_EDGE_CONSIDERED = "#FFA500"
 COLOR_EDGE_CHOSEN = "#DC143C"
+
+
+def _vulnerability_color(vuln: float) -> str:
+    """Return a hex color on a green→yellow→red gradient for *vuln* ∈ [0, 1].
+
+    0.0 → pure green, 0.5 → yellow, 1.0 → pure red.
+    """
+    # Clamp to [0, 1]
+    v = max(0.0, min(1.0, vuln))
+    # Green-to-red via linear interpolation through yellow
+    r = int(min(255, 2 * v * 255))
+    g = int(min(255, 2 * (1 - v) * 255))
+    return f"#{r:02x}{g:02x}00"
 
 
 def _spring_layout(
@@ -93,7 +106,10 @@ def _draw_network_fig(
                 )
     for nid, node in network.nodes.items():
         x, y = pos[nid]
-        color = COLOR_INFECTED if node.state == NodeState.INFECTED else COLOR_SAFE
+        if node.state == NodeState.INFECTED:
+            color = COLOR_INFECTED
+        else:
+            color = _vulnerability_color(node.vulnerability)
         size = 40 + 160 * node.vulnerability
         ax.scatter(
             x, y, s=size, c=color, edgecolors="black", linewidths=0.5, zorder=2
@@ -215,6 +231,31 @@ def _draw_network_plotly(
             text=texts, hoverinfo="text",
         ))
 
+    def _node_trace_gradient(
+        node_ids: List[int], name: str,
+    ) -> None:
+        """Draw safe nodes with per-node vulnerability gradient colors."""
+        if not node_ids:
+            return
+        xs = [pos[nid][0] for nid in node_ids]
+        ys = [pos[nid][1] for nid in node_ids]
+        sizes = [8 + 16 * network.nodes[nid].vulnerability for nid in node_ids]
+        colors = [_vulnerability_color(network.nodes[nid].vulnerability)
+                  for nid in node_ids]
+        texts = [
+            f"Node {nid}<br>State: {network.nodes[nid].state.value}"
+            f"<br>Vulnerability: {network.nodes[nid].vulnerability:.2f}"
+            for nid in node_ids
+        ]
+        fig.add_trace(go.Scatter(
+            x=xs, y=ys, mode="markers", name=name,
+            marker=dict(
+                size=sizes, color=colors, symbol="circle",
+                line=dict(width=1, color="black"),
+            ),
+            text=texts, hoverinfo="text",
+        ))
+
     safe_ids = [
         nid for nid, node in network.nodes.items()
         if node.state == NodeState.SAFE
@@ -227,7 +268,7 @@ def _draw_network_plotly(
         nid for nid in newly_set if nid in network.nodes
     ]
 
-    _node_trace(safe_ids, COLOR_SAFE, "Safe")
+    _node_trace_gradient(safe_ids, "Safe (by vulnerability)")
     _node_trace(prev_infected_ids, COLOR_INFECTED, "Infected")
     _node_trace(newly_ids_present, COLOR_NEWLY_INFECTED, "Newly infected",
                 symbol="diamond")
@@ -236,6 +277,76 @@ def _draw_network_plotly(
         title=dict(text=title, x=0.5),
         showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, visible=False),
+        yaxis=dict(
+            showgrid=False, zeroline=False, showticklabels=False,
+            visible=False, scaleanchor="x",
+        ),
+        plot_bgcolor="white",
+        width=700, height=700,
+        margin=dict(l=10, r=10, t=60, b=10),
+    )
+    return fig
+
+
+def _draw_infection_heatmap(
+    network: Network,
+    pos: Dict[int, Tuple[float, float]],
+    mean_infection_order: Dict[int, float],
+    title: str = "Infection Heatmap",
+) -> go.Figure:
+    """Return a Plotly Figure showing mean infection order as a heatmap.
+
+    Nodes are colored by the average epoch at which they were first
+    infected across batch runs: dark purple (early) → bright yellow (late).
+    """
+    fig = go.Figure()
+
+    # Draw edges
+    edge_x: List[Optional[float]] = []
+    edge_y: List[Optional[float]] = []
+    for u in network.nodes:
+        for v in network.adjacency[u]:
+            if v > u:
+                xu, yu = pos[u]
+                xv, yv = pos[v]
+                edge_x.extend([xu, xv, None])
+                edge_y.extend([yu, yv, None])
+    if edge_x:
+        fig.add_trace(go.Scatter(
+            x=edge_x, y=edge_y, mode="lines",
+            line=dict(color=COLOR_EDGE_DEFAULT, width=1),
+            hoverinfo="none", showlegend=False,
+        ))
+
+    # Draw nodes with heatmap coloring
+    node_ids = list(network.nodes.keys())
+    xs = [pos[nid][0] for nid in node_ids]
+    ys = [pos[nid][1] for nid in node_ids]
+    heat_values = [mean_infection_order.get(nid, float("nan")) for nid in node_ids]
+    sizes = [10 + 14 * network.nodes[nid].vulnerability for nid in node_ids]
+    texts = [
+        f"Node {nid}<br>Vulnerability: {network.nodes[nid].vulnerability:.2f}"
+        f"<br>Mean infection epoch: {mean_infection_order.get(nid, float('nan')):.1f}"
+        for nid in node_ids
+    ]
+
+    fig.add_trace(go.Scatter(
+        x=xs, y=ys, mode="markers", name="Infection order",
+        marker=dict(
+            size=sizes,
+            color=heat_values,
+            colorscale="Plasma",
+            showscale=True,
+            colorbar=dict(title="Mean epoch"),
+            line=dict(width=1, color="black"),
+        ),
+        text=texts, hoverinfo="text",
+    ))
+
+    fig.update_layout(
+        title=dict(text=title, x=0.5),
+        showlegend=False,
         xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, visible=False),
         yaxis=dict(
             showgrid=False, zeroline=False, showticklabels=False,
@@ -493,6 +604,7 @@ def main() -> None:
                         patient_zero_ids=[int(patient_zero)],
                         num_runs=int(n_runs),
                         max_epochs=int(max_epochs),
+                        collect_infection_order=True,
                     )
                     degree_results.append((avg_d, result))
                     progress.progress((idx + 1) / len(degrees))
@@ -534,6 +646,34 @@ def main() -> None:
                 )
                 st.pyplot(fig)
                 plt.close(fig)
+
+                # ----------------------------------------------------------
+                # Infection heatmap – per-degree network heatmaps showing
+                # average epoch at which each node was infected.
+                # ----------------------------------------------------------
+                st.subheader("🔥 Infection Heatmap (Mean Infection Order)")
+                st.write(
+                    "Each node is colored by the average epoch at which it "
+                    "was first infected across all batch runs. "
+                    "**Dark purple** = infected early, **bright yellow** = "
+                    "infected late."
+                )
+                for deg, br in degree_results:
+                    if br.mean_infection_order:
+                        # Build a representative network for layout
+                        heatmap_net = Network.random_graph(
+                            n_nodes,
+                            average_degree=deg,
+                            vulnerability_range=(vuln_lo, vuln_hi),
+                            seed=int(seed),
+                        )
+                        heatmap_pos = _spring_layout(heatmap_net, seed=int(seed))
+                        heatmap_fig = _draw_infection_heatmap(
+                            heatmap_net, heatmap_pos,
+                            br.mean_infection_order,
+                            title=f"Avg Infection Order — deg={deg:.1f}",
+                        )
+                        st.plotly_chart(heatmap_fig, use_container_width=True)
 
     # ==================================================================
     # TAB 3 – Step-by-step replay with Play/Pause
@@ -612,13 +752,10 @@ def main() -> None:
             params = st.session_state["replay_net_params"]
 
             # ---- Playback controls ----
-            ctrl_cols = st.columns([1, 1, 1, 3])
+            ctrl_cols = st.columns([1, 1, 1, 2, 1])
             with ctrl_cols[0]:
                 if st.button("▶ Play", key="replay_play"):
                     st.session_state["replay_playing"] = True
-                    st.session_state["replay_epoch_idx"] = st.session_state.get(
-                        "replay_epoch_idx", 0
-                    )
             with ctrl_cols[1]:
                 if st.button("⏸ Pause", key="replay_pause"):
                     st.session_state["replay_playing"] = False
@@ -635,22 +772,31 @@ def main() -> None:
                     step=0.05,
                     key="replay_speed",
                 )
+            with ctrl_cols[4]:
+                loop_animation = st.checkbox("Loop", key="replay_loop")
 
             is_playing = st.session_state.get("replay_playing", False)
 
-            # Keep the slider widget in sync with the internal epoch
-            # tracker so that play / pause / manual scrub all share a
-            # single source of truth.
-            st.session_state["replay_slider"] = st.session_state.get(
-                "replay_epoch_idx", 0
-            )
+            def _on_slider_change() -> None:
+                """Pause playback when the user manually drags the slider."""
+                st.session_state["replay_playing"] = False
+                st.session_state["replay_epoch_idx"] = st.session_state[
+                    "replay_slider"
+                ]
+
+            # Sync the slider default with the internal epoch tracker
+            # so auto-advance and manual scrub share a single source of
+            # truth.  The slider is always enabled; dragging it pauses
+            # playback via the on_change callback.
+            current_idx = st.session_state.get("replay_epoch_idx", 0)
 
             epoch_idx = st.slider(
                 "Epoch",
                 0,
                 len(snapshots) - 1,
+                value=current_idx,
                 key="replay_slider",
-                disabled=is_playing,
+                on_change=_on_slider_change,
             )
             st.session_state["replay_epoch_idx"] = epoch_idx
 
@@ -716,8 +862,14 @@ def main() -> None:
                 st.session_state["replay_epoch_idx"] = epoch_idx + 1
                 st.rerun()
             elif is_playing and epoch_idx >= len(snapshots) - 1:
-                # Reached the end — stop playing
-                st.session_state["replay_playing"] = False
+                if loop_animation:
+                    # Loop back to the beginning
+                    time.sleep(playback_speed)
+                    st.session_state["replay_epoch_idx"] = 0
+                    st.rerun()
+                else:
+                    # Reached the end — stop playing
+                    st.session_state["replay_playing"] = False
 
 
 # ------------------------------------------------------------------

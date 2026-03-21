@@ -25,6 +25,8 @@ class BatchResult:
     std_epochs_to_full_infection: Optional[float]
     mean_infection_curve: List[float]
     individual_epochs: List[Optional[int]]
+    mean_infection_order: Optional[Dict[int, float]] = None
+    """Per-node mean epoch of infection across runs (``None`` when not collected)."""
 
 
 class AnalyticsEngine:
@@ -39,14 +41,22 @@ class AnalyticsEngine:
         patient_zero_ids: Sequence[int],
         num_runs: int = 100,
         max_epochs: int = 1000,
+        collect_infection_order: bool = False,
     ) -> BatchResult:
         """Execute *num_runs* independent simulations.
 
         *network_factory* must return a **fresh** ``Network`` each call
         so that every run starts from a clean state.
+
+        If *collect_infection_order* is ``True``, the returned
+        :class:`BatchResult` will contain ``mean_infection_order`` — a
+        mapping from node ID to the mean epoch at which the node was
+        first infected across all runs.
         """
         all_epochs: List[Optional[int]] = []
         all_curves: List[List[float]] = []
+        # Per-run infection order: list of {node_id: epoch_infected}
+        all_infection_orders: List[Dict[int, int]] = []
 
         for i in range(num_runs):
             seed = (self._base_seed + i) if self._base_seed is not None else None
@@ -58,6 +68,14 @@ class AnalyticsEngine:
 
             all_epochs.append(orch.epochs_to_full_infection())
             all_curves.append(orch.infection_curve())
+
+            if collect_infection_order:
+                order: Dict[int, int] = {}
+                for rec in orch.history:
+                    for nid in rec.newly_infected_ids:
+                        if nid not in order:
+                            order[nid] = rec.epoch
+                all_infection_orders.append(order)
 
         # Compute mean infection curve (pad shorter curves with 1.0)
         max_len = max(len(c) for c in all_curves) if all_curves else 0
@@ -75,12 +93,25 @@ class AnalyticsEngine:
             mean_e = None
             std_e = None
 
+        # Compute mean infection order across runs
+        mean_order: Optional[Dict[int, float]] = None
+        if collect_infection_order and all_infection_orders:
+            node_totals: Dict[int, List[int]] = {}
+            for order in all_infection_orders:
+                for nid, epoch in order.items():
+                    node_totals.setdefault(nid, []).append(epoch)
+            mean_order = {
+                nid: float(np.mean(epochs))
+                for nid, epochs in node_totals.items()
+            }
+
         return BatchResult(
             num_runs=num_runs,
             mean_epochs_to_full_infection=mean_e,
             std_epochs_to_full_infection=std_e,
             mean_infection_curve=mean_curve,
             individual_epochs=all_epochs,
+            mean_infection_order=mean_order,
         )
 
     @staticmethod

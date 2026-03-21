@@ -55,3 +55,27 @@ class TestAnalyticsEngine:
         assert r is not None
         # Higher degree => faster infection => negative correlation expected
         assert -1.0 <= r <= 1.0
+
+    def test_batch_without_infection_order(self):
+        """Default run_batch does NOT collect infection order."""
+        engine = AnalyticsEngine(seed=0)
+        result = engine.run_batch(
+            self._factory, patient_zero_ids=[0], num_runs=3, max_epochs=100,
+        )
+        assert result.mean_infection_order is None
+
+    def test_batch_with_infection_order(self):
+        """collect_infection_order=True populates mean_infection_order."""
+        engine = AnalyticsEngine(seed=0)
+        result = engine.run_batch(
+            self._factory, patient_zero_ids=[0], num_runs=5, max_epochs=100,
+            collect_infection_order=True,
+        )
+        assert result.mean_infection_order is not None
+        # Patient zero (node 0) should always be infected at epoch 0
+        assert result.mean_infection_order[0] == 0.0
+        # All 5 nodes should appear in the mapping
+        assert len(result.mean_infection_order) == 5
+        # Every mean epoch must be non-negative
+        for nid, epoch in result.mean_infection_order.items():
+            assert epoch >= 0.0
