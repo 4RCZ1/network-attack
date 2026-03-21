@@ -27,6 +27,22 @@ python main.py
 2. **Batch analysis** — Erdős–Rényi graphs with average degrees 2 / 4 / 6 / 8; prints mean epochs to full infection and Pearson *r*.
 3. **Defense strategy** — compares baseline propagation vs. a network with low-vulnerability "firewall" nodes.
 
+## Web UI
+
+An interactive Streamlit dashboard lets you configure, run, and replay simulations in the browser:
+
+```bash
+streamlit run network_attack/ui.py
+```
+
+The UI offers three tabs:
+
+| Tab | What it does |
+|-----|-------------|
+| **▶ Run Simulation** | Configure topology, parameters and seed, run a single simulation, view infection curve, final graph state and epoch-by-epoch details. |
+| **📊 Batch Analysis** | Run many simulations across different average degrees, view summary statistics and Pearson correlation between connectivity and infection speed. |
+| **🔄 Replay Infection** | Step through the infection epoch-by-epoch with an interactive slider, seeing the graph and curve update in real time. |
+
 ## Usage Example
 
 ```python
