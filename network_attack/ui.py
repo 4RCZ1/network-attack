@@ -14,7 +14,7 @@ import time
 # Ensure the project root is on sys.path so 'network_attack' can be imported
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from copy import deepcopy
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -139,7 +139,7 @@ def _draw_curve_fig(
 
     for label, data in curves.items():
         epochs = list(range(len(data)))
-        plot_kwargs: Dict[str, object] = {"label": label, "linewidth": 2}
+        plot_kwargs: Dict[str, Any] = {"label": label, "linewidth": 2}
         if use_single_color:
             plot_kwargs["color"] = "#e74c3c"
         (line,) = ax.plot(epochs, data, **plot_kwargs)
