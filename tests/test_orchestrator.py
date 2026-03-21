@@ -76,3 +76,48 @@ class TestSimulationOrchestrator:
         assert net.nodes[0].state == NodeState.INFECTED
         assert net.nodes[4].state == NodeState.INFECTED
         assert orch.history[0].infected_count == 2
+
+    # ------------------------------------------------------------------
+    # Detailed step
+    # ------------------------------------------------------------------
+
+    def test_step_detailed_records_edges(self):
+        net = _line_network(5)
+        orch = SimulationOrchestrator(net, RandomWalkEngine(seed=0))
+        orch.set_patient_zero([0])
+        rec = orch.step_detailed()
+        assert rec.epoch == 1
+        # Node 0 is infected, its only safe neighbor is 1 ⇒ considered (0,1)
+        assert len(rec.considered_edges) >= 1
+        assert len(rec.chosen_edges) >= 1
+        # All chosen edges should also appear in considered edges
+        for e in rec.chosen_edges:
+            assert e in rec.considered_edges
+
+    def test_step_detailed_epoch0_has_no_edges(self):
+        net = _line_network(3)
+        orch = SimulationOrchestrator(net, RandomWalkEngine(seed=0))
+        orch.set_patient_zero([0])
+        # Epoch 0 is the initial state — no random walk happened
+        assert orch.history[0].considered_edges == []
+        assert orch.history[0].chosen_edges == []
+
+    def test_step_detailed_produces_same_infection_as_step(self):
+        # Normal run
+        net1 = _line_network(5)
+        orch1 = SimulationOrchestrator(net1, RandomWalkEngine(seed=7))
+        orch1.set_patient_zero([0])
+        orch1.run(max_epochs=50)
+
+        # Detailed run
+        net2 = _line_network(5)
+        orch2 = SimulationOrchestrator(net2, RandomWalkEngine(seed=7))
+        orch2.set_patient_zero([0])
+        for _ in range(50):
+            if net2.infection_ratio() >= 1.0:
+                break
+            orch2.step_detailed()
+
+        curve1 = orch1.infection_curve()
+        curve2 = orch2.infection_curve()
+        assert curve1 == curve2

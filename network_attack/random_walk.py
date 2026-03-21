@@ -7,11 +7,27 @@ a neighboring node is proportional to that neighbor's vulnerability index.
 from __future__ import annotations
 
 import random
-from typing import List, Optional
+from dataclasses import dataclass, field
+from typing import List, Optional, Tuple
 
 import numpy as np
 
 from network_attack.network import Network, Node, NodeState
+
+
+@dataclass
+class StepDetail:
+    """Detailed result of a single random walk step from an infected node.
+
+    Attributes:
+        source_id: The infected node that attempted to spread.
+        considered_target_ids: IDs of safe neighbors that were candidates.
+        chosen_target_id: ID of the node actually infected, or ``None``.
+    """
+
+    source_id: int
+    considered_target_ids: List[int] = field(default_factory=list)
+    chosen_target_id: Optional[int] = None
 
 
 class RandomWalkEngine:
@@ -88,3 +104,48 @@ class RandomWalkEngine:
             if result is not None:
                 newly_infected.append(result)
         return newly_infected
+
+    # ------------------------------------------------------------------
+    # Detailed variants that also track considered / chosen edges
+    # ------------------------------------------------------------------
+
+    def step_from_node_detailed(
+        self, network: Network, node_id: int
+    ) -> StepDetail:
+        """Like :meth:`step_from_node` but return a :class:`StepDetail`.
+
+        The random-number sequence is identical to ``step_from_node`` so
+        simulations using detailed methods are fully reproducible.
+        """
+        safe_neighbors = self.get_safe_neighbors(network, node_id)
+        if not safe_neighbors:
+            return StepDetail(source_id=node_id)
+        probs = self.build_probability_vector(safe_neighbors)
+        target = self.select_target(safe_neighbors, probs)
+        considered = [n.node_id for n in safe_neighbors]
+        chosen = target.node_id if target is not None else None
+        if target is not None:
+            target.state = NodeState.INFECTED
+        return StepDetail(
+            source_id=node_id,
+            considered_target_ids=considered,
+            chosen_target_id=chosen,
+        )
+
+    def step_all_infected_detailed(
+        self, network: Network
+    ) -> Tuple[List[Node], List[StepDetail]]:
+        """Like :meth:`step_all_infected` but also return per-source details.
+
+        Returns ``(newly_infected, details)`` where *details* is a list
+        of :class:`StepDetail` entries (one per currently infected node).
+        """
+        infected_ids = [n.node_id for n in network.get_infected_nodes()]
+        newly_infected: List[Node] = []
+        details: List[StepDetail] = []
+        for nid in infected_ids:
+            detail = self.step_from_node_detailed(network, nid)
+            details.append(detail)
+            if detail.chosen_target_id is not None:
+                newly_infected.append(network.nodes[detail.chosen_target_id])
+        return newly_infected, details

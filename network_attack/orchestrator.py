@@ -7,10 +7,10 @@ time-step loop, and per-epoch statistics logging.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from network_attack.network import Network, NodeState
-from network_attack.random_walk import RandomWalkEngine
+from network_attack.random_walk import RandomWalkEngine, StepDetail
 
 
 @dataclass
@@ -23,6 +23,8 @@ class EpochRecord:
     safe_count: int
     infection_ratio: float
     newly_infected_ids: List[int]
+    considered_edges: List[Tuple[int, int]] = field(default_factory=list)
+    chosen_edges: List[Tuple[int, int]] = field(default_factory=list)
 
 
 class SimulationOrchestrator:
@@ -69,7 +71,12 @@ class SimulationOrchestrator:
     # Simulation loop helpers
     # ------------------------------------------------------------------
 
-    def _record_epoch(self, newly_infected_ids: List[int]) -> None:
+    def _record_epoch(
+        self,
+        newly_infected_ids: List[int],
+        considered_edges: Optional[List[Tuple[int, int]]] = None,
+        chosen_edges: Optional[List[Tuple[int, int]]] = None,
+    ) -> None:
         total = self.network.node_count()
         infected = len(self.network.get_infected_nodes())
         self.history.append(
@@ -80,6 +87,8 @@ class SimulationOrchestrator:
                 safe_count=total - infected,
                 infection_ratio=self.network.infection_ratio(),
                 newly_infected_ids=newly_infected_ids,
+                considered_edges=considered_edges or [],
+                chosen_edges=chosen_edges or [],
             )
         )
 
@@ -91,6 +100,29 @@ class SimulationOrchestrator:
         self.current_epoch += 1
         newly = self.engine.step_all_infected(self.network)
         self._record_epoch([n.node_id for n in newly])
+        return self.history[-1]
+
+    def step_detailed(self) -> EpochRecord:
+        """Like :meth:`step` but also records considered / chosen edges.
+
+        Uses :meth:`RandomWalkEngine.step_all_infected_detailed` so that
+        the epoch record contains the edges the random walk evaluated
+        and the ones it actually traversed.
+        """
+        self.current_epoch += 1
+        newly, details = self.engine.step_all_infected_detailed(self.network)
+        considered: List[Tuple[int, int]] = []
+        chosen: List[Tuple[int, int]] = []
+        for d in details:
+            for tid in d.considered_target_ids:
+                considered.append((d.source_id, tid))
+            if d.chosen_target_id is not None:
+                chosen.append((d.source_id, d.chosen_target_id))
+        self._record_epoch(
+            [n.node_id for n in newly],
+            considered_edges=considered,
+            chosen_edges=chosen,
+        )
         return self.history[-1]
 
     def run(self, max_epochs: int = 1000) -> List[EpochRecord]:

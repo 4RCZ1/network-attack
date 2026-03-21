@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+import plotly.graph_objects as go
 import streamlit as st
 
 from network_attack.analytics import AnalyticsEngine, BatchResult
@@ -34,6 +35,10 @@ matplotlib.use("Agg")
 
 COLOR_SAFE = "#3498db"
 COLOR_INFECTED = "#e74c3c"
+COLOR_NEWLY_INFECTED = "#f39c12"
+COLOR_EDGE_DEFAULT = "rgba(200,200,200,0.4)"
+COLOR_EDGE_CONSIDERED = "#FFA500"
+COLOR_EDGE_CHOSEN = "#DC143C"
 
 
 def _spring_layout(
@@ -97,6 +102,149 @@ def _draw_network_fig(
     ax.set_aspect("equal")
     ax.axis("off")
     fig.tight_layout()
+    return fig
+
+
+def _draw_network_plotly(
+    network: Network,
+    pos: Dict[int, Tuple[float, float]],
+    title: str = "Network",
+    considered_edges: Optional[List[Tuple[int, int]]] = None,
+    chosen_edges: Optional[List[Tuple[int, int]]] = None,
+    newly_infected_ids: Optional[List[int]] = None,
+) -> go.Figure:
+    """Return a Plotly Figure of the network with edge highlighting.
+
+    Parameters
+    ----------
+    network:
+        The network to draw.
+    pos:
+        Mapping from node id to ``(x, y)`` position.
+    title:
+        Figure title.
+    considered_edges:
+        Edges the random walk evaluated (drawn in orange).
+    chosen_edges:
+        Edges the random walk actually traversed (drawn in crimson).
+    newly_infected_ids:
+        Node IDs infected this epoch (drawn in a distinct color).
+    """
+    considered_set: set[Tuple[int, int]] = set()
+    chosen_set: set[Tuple[int, int]] = set()
+    if considered_edges:
+        for u, v in considered_edges:
+            considered_set.add((min(u, v), max(u, v)))
+    if chosen_edges:
+        for u, v in chosen_edges:
+            chosen_set.add((min(u, v), max(u, v)))
+    newly_set = set(newly_infected_ids or [])
+
+    # ---- Edge traces ----
+    def _edge_coords(
+        edge_list: set[Tuple[int, int]],
+    ) -> Tuple[List[Optional[float]], List[Optional[float]]]:
+        xs: List[Optional[float]] = []
+        ys: List[Optional[float]] = []
+        for u, v in edge_list:
+            xu, yu = pos[u]
+            xv, yv = pos[v]
+            xs.extend([xu, xv, None])
+            ys.extend([yu, yv, None])
+        return xs, ys
+
+    # Collect default edges (those not in considered or chosen)
+    default_edges: set[Tuple[int, int]] = set()
+    for u in network.nodes:
+        for v in network.adjacency[u]:
+            if v > u:
+                key = (u, v)
+                if key not in considered_set and key not in chosen_set:
+                    default_edges.add(key)
+
+    fig = go.Figure()
+
+    # Default edges
+    dx, dy = _edge_coords(default_edges)
+    if dx:
+        fig.add_trace(go.Scatter(
+            x=dx, y=dy, mode="lines",
+            line=dict(color=COLOR_EDGE_DEFAULT, width=1),
+            hoverinfo="none", showlegend=False,
+        ))
+
+    # Considered edges (exclude those that are also chosen)
+    considered_only = considered_set - chosen_set
+    cx, cy = _edge_coords(considered_only)
+    if cx:
+        fig.add_trace(go.Scatter(
+            x=cx, y=cy, mode="lines",
+            line=dict(color=COLOR_EDGE_CONSIDERED, width=2.5),
+            hoverinfo="none", name="Considered",
+        ))
+
+    # Chosen edges
+    chx, chy = _edge_coords(chosen_set)
+    if chx:
+        fig.add_trace(go.Scatter(
+            x=chx, y=chy, mode="lines",
+            line=dict(color=COLOR_EDGE_CHOSEN, width=4),
+            hoverinfo="none", name="Chosen",
+        ))
+
+    # ---- Node traces ----
+    def _node_trace(
+        node_ids: List[int], color: str, name: str, symbol: str = "circle",
+    ) -> None:
+        if not node_ids:
+            return
+        xs = [pos[nid][0] for nid in node_ids]
+        ys = [pos[nid][1] for nid in node_ids]
+        sizes = [8 + 16 * network.nodes[nid].vulnerability for nid in node_ids]
+        texts = [
+            f"Node {nid}<br>State: {network.nodes[nid].state.value}"
+            f"<br>Vulnerability: {network.nodes[nid].vulnerability:.2f}"
+            for nid in node_ids
+        ]
+        fig.add_trace(go.Scatter(
+            x=xs, y=ys, mode="markers", name=name,
+            marker=dict(
+                size=sizes, color=color, symbol=symbol,
+                line=dict(width=1, color="black"),
+            ),
+            text=texts, hoverinfo="text",
+        ))
+
+    safe_ids = [
+        nid for nid, node in network.nodes.items()
+        if node.state == NodeState.SAFE
+    ]
+    prev_infected_ids = [
+        nid for nid, node in network.nodes.items()
+        if node.state == NodeState.INFECTED and nid not in newly_set
+    ]
+    newly_ids_present = [
+        nid for nid in newly_set if nid in network.nodes
+    ]
+
+    _node_trace(safe_ids, COLOR_SAFE, "Safe")
+    _node_trace(prev_infected_ids, COLOR_INFECTED, "Infected")
+    _node_trace(newly_ids_present, COLOR_NEWLY_INFECTED, "Newly infected",
+                symbol="diamond")
+
+    fig.update_layout(
+        title=dict(text=title, x=0.5),
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, visible=False),
+        yaxis=dict(
+            showgrid=False, zeroline=False, showticklabels=False,
+            visible=False, scaleanchor="x",
+        ),
+        plot_bgcolor="white",
+        width=700, height=700,
+        margin=dict(l=10, r=10, t=60, b=10),
+    )
     return fig
 
 
@@ -394,6 +542,8 @@ def main() -> None:
         st.subheader("Step-by-Step Infection Replay")
         st.write(
             "Replay the infection spreading epoch by epoch on the network graph. "
+            "**Orange** edges show paths the random walk considered; "
+            "**crimson** edges show the paths it chose. "
             "Use the **Play** button to animate automatically or drag the slider manually."
         )
 
@@ -416,7 +566,7 @@ def main() -> None:
 
                 pos = _spring_layout(net, seed=int(seed))
 
-                # Build snapshots: re-run to capture state at each epoch
+                # Build snapshots with detailed edge data via step_detailed
                 replay_net = _build_network(
                     topology, n_nodes, seed,
                     avg_degree if topology == "Erdős–Rényi (Random)" else None,
@@ -433,12 +583,13 @@ def main() -> None:
                 for _ in range(len(history) - 1):
                     if replay_net.infection_ratio() >= 1.0:
                         break
-                    replay_orch.step()
+                    replay_orch.step_detailed()
                     snapshots.append(_snapshot_states_str(replay_net))
 
                 st.session_state["replay_snapshots"] = snapshots
                 st.session_state["replay_pos"] = pos
-                st.session_state["replay_history"] = history
+                # Use the detailed history from replay_orch (has edge data)
+                st.session_state["replay_history"] = replay_orch.history
                 st.session_state["replay_net_params"] = {
                     "topology": topology,
                     "n_nodes": n_nodes,
@@ -520,11 +671,14 @@ def main() -> None:
 
             col_graph, col_info = st.columns([2, 1])
             with col_graph:
-                fig = _draw_network_fig(
-                    net, pos, title=f"Epoch {rec.epoch}"
+                plotly_fig = _draw_network_plotly(
+                    net, pos,
+                    title=f"Epoch {rec.epoch}",
+                    considered_edges=rec.considered_edges,
+                    chosen_edges=rec.chosen_edges,
+                    newly_infected_ids=rec.newly_infected_ids,
                 )
-                st.pyplot(fig)
-                plt.close(fig)
+                st.plotly_chart(plotly_fig, use_container_width=True)
 
             with col_info:
                 st.metric("Epoch", rec.epoch)
@@ -534,6 +688,14 @@ def main() -> None:
                 if rec.newly_infected_ids:
                     st.write(
                         f"**Newly infected:** {', '.join(map(str, rec.newly_infected_ids))}"
+                    )
+                if rec.considered_edges:
+                    st.write(
+                        f"**Edges evaluated:** {len(rec.considered_edges)}"
+                    )
+                if rec.chosen_edges:
+                    st.write(
+                        f"**Edges traversed:** {len(rec.chosen_edges)}"
                     )
 
             # Show infection curve up to current epoch with improvements
