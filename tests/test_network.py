@@ -137,6 +137,8 @@ class TestGraphGenerators:
         )
         for nid in net.nodes:
             assert len(net.adjacency[nid]) >= 1, f"Node {nid} is still an orphan"
+        # All-orphan fallback creates a chain: exactly n-1 edges
+        assert net.edge_count() == net.node_count() - 1
 
     def test_random_graph_remove_orphans_false_preserves_behavior(self):
         net_a = Network.random_graph(20, average_degree=4.0, seed=42)
