@@ -114,6 +114,30 @@ class Network:
         for node in self.nodes.values():
             node.state = NodeState.SAFE
 
+    def _connect_orphans(self, rng: random.Random) -> None:
+        """Connect every orphan node (degree 0) to a random non-orphan.
+
+        If *all* nodes are orphans the method falls back to creating a
+        simple chain so that every node has at least one neighbour.
+        """
+        orphans = [nid for nid, nbrs in self.adjacency.items() if len(nbrs) == 0]
+        if not orphans:
+            return
+
+        non_orphans = [nid for nid in self.nodes if nid not in set(orphans)]
+
+        if not non_orphans:
+            # Every node is isolated — form a chain so each gets ≥ 1 edge.
+            for i in range(len(orphans) - 1):
+                self.add_edge(orphans[i], orphans[i + 1])
+            return
+
+        for oid in orphans:
+            target = rng.choice(non_orphans)
+            self.add_edge(oid, target)
+            # The formerly-orphan node is now a valid target for others.
+            non_orphans.append(oid)
+
     # ------------------------------------------------------------------
     # Graph generators (class methods)
     # ------------------------------------------------------------------
@@ -137,12 +161,17 @@ class Network:
         average_degree: float,
         vulnerability_range: Tuple[float, float] = (0.3, 0.9),
         seed: Optional[int] = None,
+        remove_orphans: bool = False,
     ) -> "Network":
         """Generate an Erdős–Rényi-style random graph.
 
         Each possible edge is included independently with probability
         ``p = average_degree / (n - 1)`` so that the expected average
         degree equals *average_degree*.
+
+        If *remove_orphans* is ``True``, every node that ends up with
+        degree 0 is connected to a uniformly-random non-orphan node so
+        that no isolated nodes remain in the graph.
         """
         if n < 2:
             raise ValueError("n must be at least 2")
@@ -157,6 +186,10 @@ class Network:
             for j in range(i + 1, n):
                 if rng.random() < p:
                     net.add_edge(i, j)
+
+        if remove_orphans:
+            net._connect_orphans(rng)
+
         return net
 
     @classmethod

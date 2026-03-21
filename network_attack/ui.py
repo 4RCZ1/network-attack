@@ -220,6 +220,13 @@ def main() -> None:
     if vuln_lo > vuln_hi:
         vuln_lo, vuln_hi = vuln_hi, vuln_lo
 
+    remove_orphans = st.sidebar.checkbox(
+        "Remove orphan nodes",
+        value=False,
+        help="Connect isolated (degree-0) nodes to a random neighbour "
+        "so no node is unreachable. Only affects Erdős–Rényi graphs.",
+    )
+
     seed = st.sidebar.number_input("Random seed", value=42, step=1)
     patient_zero = st.sidebar.number_input(
         "Patient zero node ID", value=0, min_value=0, max_value=n_nodes - 1, step=1
@@ -244,6 +251,7 @@ def main() -> None:
                     avg_degree if topology == "Erdős–Rényi (Random)" else None,
                     ba_m if topology == "Barabási–Albert (Scale-Free)" else None,
                     (vuln_lo, vuln_hi),
+                    remove_orphans=remove_orphans,
                 )
                 engine = RandomWalkEngine(seed=int(seed))
                 orch = SimulationOrchestrator(net, engine)
@@ -399,6 +407,7 @@ def main() -> None:
                     avg_degree if topology == "Erdős–Rényi (Random)" else None,
                     ba_m if topology == "Barabási–Albert (Scale-Free)" else None,
                     (vuln_lo, vuln_hi),
+                    remove_orphans=remove_orphans,
                 )
                 engine = RandomWalkEngine(seed=int(seed))
                 orch = SimulationOrchestrator(net, engine)
@@ -413,6 +422,7 @@ def main() -> None:
                     avg_degree if topology == "Erdős–Rényi (Random)" else None,
                     ba_m if topology == "Barabási–Albert (Scale-Free)" else None,
                     (vuln_lo, vuln_hi),
+                    remove_orphans=remove_orphans,
                 )
                 replay_engine = RandomWalkEngine(seed=int(seed))
                 replay_orch = SimulationOrchestrator(replay_net, replay_engine)
@@ -436,6 +446,7 @@ def main() -> None:
                     "avg_degree": avg_degree if topology == "Erdős–Rényi (Random)" else None,
                     "ba_m": ba_m if topology == "Barabási–Albert (Scale-Free)" else None,
                     "vuln_range": (vuln_lo, vuln_hi),
+                    "remove_orphans": remove_orphans,
                 }
                 st.session_state["replay_epoch_idx"] = 0
 
@@ -476,28 +487,21 @@ def main() -> None:
 
             is_playing = st.session_state.get("replay_playing", False)
 
-            # Determine epoch index: use session state when playing,
-            # otherwise let the slider drive.
-            if is_playing:
-                epoch_idx = st.session_state.get("replay_epoch_idx", 0)
-                # Show slider as read-only indicator (synced to current epoch)
-                st.slider(
-                    "Epoch",
-                    0,
-                    len(snapshots) - 1,
-                    epoch_idx,
-                    key="replay_slider_playing",
-                    disabled=True,
-                )
-            else:
-                epoch_idx = st.slider(
-                    "Epoch",
-                    0,
-                    len(snapshots) - 1,
-                    st.session_state.get("replay_epoch_idx", 0),
-                    key="replay_slider",
-                )
-                st.session_state["replay_epoch_idx"] = epoch_idx
+            # Keep the slider widget in sync with the internal epoch
+            # tracker so that play / pause / manual scrub all share a
+            # single source of truth.
+            st.session_state["replay_slider"] = st.session_state.get(
+                "replay_epoch_idx", 0
+            )
+
+            epoch_idx = st.slider(
+                "Epoch",
+                0,
+                len(snapshots) - 1,
+                key="replay_slider",
+                disabled=is_playing,
+            )
+            st.session_state["replay_epoch_idx"] = epoch_idx
 
             snapshot = snapshots[epoch_idx]
             rec = history[epoch_idx] if epoch_idx < len(history) else history[-1]
@@ -510,6 +514,7 @@ def main() -> None:
                 params.get("avg_degree"),
                 params.get("ba_m"),
                 params["vuln_range"],
+                remove_orphans=params.get("remove_orphans", False),
             )
             _restore_states_str(net, snapshot)
 
@@ -565,6 +570,7 @@ def _build_network(
     avg_degree: Optional[float] = None,
     ba_m: Optional[int] = None,
     vuln_range: Tuple[float, float] = (0.3, 0.9),
+    remove_orphans: bool = False,
 ) -> Network:
     """Create a network from the given parameters."""
     if topology == "Erdős–Rényi (Random)":
@@ -573,6 +579,7 @@ def _build_network(
             average_degree=avg_degree or 4.0,
             vulnerability_range=vuln_range,
             seed=int(seed),
+            remove_orphans=remove_orphans,
         )
     elif topology == "Star":
         return Network.star_graph(

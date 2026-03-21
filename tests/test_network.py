@@ -121,3 +121,26 @@ class TestGraphGenerators:
     def test_scale_free_invalid_m_raises(self):
         with pytest.raises(ValueError):
             Network.scale_free_graph(5, m=5)
+
+    def test_random_graph_remove_orphans(self):
+        # Use a very low average degree to make orphans likely
+        net = Network.random_graph(
+            50, average_degree=0.5, seed=99, remove_orphans=True
+        )
+        for nid in net.nodes:
+            assert len(net.adjacency[nid]) >= 1, f"Node {nid} is still an orphan"
+
+    def test_random_graph_remove_orphans_all_isolated(self):
+        # average_degree=0 means p=0, so all nodes are orphans
+        net = Network.random_graph(
+            10, average_degree=0.0, seed=0, remove_orphans=True
+        )
+        for nid in net.nodes:
+            assert len(net.adjacency[nid]) >= 1, f"Node {nid} is still an orphan"
+
+    def test_random_graph_remove_orphans_false_preserves_behavior(self):
+        net_a = Network.random_graph(20, average_degree=4.0, seed=42)
+        net_b = Network.random_graph(
+            20, average_degree=4.0, seed=42, remove_orphans=False
+        )
+        assert net_a.edge_count() == net_b.edge_count()
