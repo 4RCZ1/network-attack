@@ -784,11 +784,15 @@ def main() -> None:
                     "replay_slider"
                 ]
 
-            # Sync the slider default with the internal epoch tracker
+            # Sync the slider widget key with the internal epoch tracker
             # so auto-advance and manual scrub share a single source of
-            # truth.  The slider is always enabled; dragging it pauses
-            # playback via the on_change callback.
+            # truth.  We must write replay_slider *before* the widget
+            # renders, because Streamlit ignores the ``value`` parameter
+            # when the key already exists in session state.  The slider
+            # is always enabled; dragging it pauses playback via the
+            # on_change callback (programmatic writes do not trigger it).
             current_idx = st.session_state.get("replay_epoch_idx", 0)
+            st.session_state["replay_slider"] = current_idx
 
             epoch_idx = st.slider(
                 "Epoch",
