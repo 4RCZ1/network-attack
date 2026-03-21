@@ -7,6 +7,11 @@ Launch with:
 from __future__ import annotations
 
 import io
+import sys
+import os
+
+# Ensure the project root is on sys.path so 'network_attack' can be imported
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from copy import deepcopy
 from typing import Dict, List, Optional, Tuple
 
