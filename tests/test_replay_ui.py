@@ -63,7 +63,7 @@ epoch_idx = st.slider(
 )
 st.session_state["replay_epoch_idx"] = epoch_idx
 
-# ---- auto-advance (same as ui.py but WITHOUT time.sleep / st.rerun
+# ---- auto-advance (same as ui.py but WITHOUT time.sleep / st.rerun()
 #      so that AppTest doesn't block) ----
 at_end = epoch_idx >= len(snapshots) - 1
 if is_playing and not at_end:
